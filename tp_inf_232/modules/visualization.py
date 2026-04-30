@@ -1,196 +1,110 @@
 import streamlit as st
-import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import numpy as np
-from utils.helpers import check_data_loaded, numeric_columns, categorical_columns
-
-
-PLOTLY_THEME = "plotly_dark"
-GREEN = "#2ecc71"
-
-
-def _base_layout(fig):
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(22,27,34,1)",
-        font_color="#e6edf3",
-        font_family="DM Sans",
-        margin=dict(l=20, r=20, t=40, b=20),
-    )
-    return fig
-
+import pandas as pd
 
 def render():
     st.markdown("# 📈 Visualization")
-    if not check_data_loaded():
+    
+    if st.session_state.data is None:
+        st.warning("⚠️ No data found. Please load or input data first.")
         return
 
     df = st.session_state.data
-    num_cols = numeric_columns(df)
-    cat_cols = categorical_columns(df)
+    
+    # Separate columns by type
+    num_cols = df.select_dtypes(include=['number']).columns.tolist()
+    nom_cols = df.select_dtypes(exclude=['number']).columns.tolist()
 
-    chart_type = st.selectbox("Choose chart type", [
-        "Histogram",
-        "Box Plot",
-        "Line Chart",
-        "Bar Chart (Categorical)",
-        "Pie Chart",
-        "Scatter + Regression Line",
-        "Correlation Heatmap",
-    ])
+    # ── Chart Selection ──────────────────────────────────────────────────────
+    
+    # Check if we were redirected from the Nominal Analysis tab
+    default_chart = "Histogram"
+    if "target_nominal_col" in st.session_state:
+        default_chart = "Bar Chart (Categorical)"
+
+    chart_type = st.selectbox(
+        "Choose chart type", 
+        ["Histogram", "Box Plot", "Line Chart", "Bar Chart (Categorical)", "Pie Chart", "Scatter Plot"],
+        index=["Histogram", "Box Plot", "Line Chart", "Bar Chart (Categorical)", "Pie Chart", "Scatter Plot"].index(default_chart)
+    )
 
     st.divider()
 
-    # ── Histogram ─────────────────────────────────────────────────────────────
+    # ── 1. Histogram (Numerical) ─────────────────────────────────────────────
     if chart_type == "Histogram":
         if not num_cols:
-            st.warning("No numeric columns available.")
-            return
-        col = st.selectbox("Select column", num_cols)
-        bins = st.slider("Number of bins", 5, 100, 20)
-        color_opt = st.color_picker("Bar color", GREEN)
+            st.error("No numerical columns available for a Histogram.")
+        else:
+            col = st.selectbox("Select Numeric Column", num_cols)
+            bins = st.slider("Number of bins", 5, 50, 20)
+            fig = px.histogram(df, x=col, nbins=bins, title=f"Distribution of {col}", 
+                               color_discrete_sequence=['#2ecc71'], template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
 
-        fig = px.histogram(df, x=col, nbins=bins, title=f"Histogram of {col}",
-                           color_discrete_sequence=[color_opt])
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Box Plot ──────────────────────────────────────────────────────────────
+    # ── 2. Box Plot (Numerical) ──────────────────────────────────────────────
     elif chart_type == "Box Plot":
         if not num_cols:
-            st.warning("No numeric columns available.")
-            return
-        cols = st.multiselect("Select columns", num_cols, default=num_cols[:min(3, len(num_cols))])
-        if not cols:
-            st.info("Select at least one column.")
-            return
-        fig = go.Figure()
-        colors = px.colors.qualitative.Prism
-        for i, c in enumerate(cols):
-            fig.add_trace(go.Box(y=df[c].dropna(), name=c,
-                                 marker_color=colors[i % len(colors)],
-                                 boxmean=True))
-        fig.update_layout(title="Box Plot", template=PLOTLY_THEME)
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
+            st.error("No numerical columns available for a Box Plot.")
+        else:
+            col = st.selectbox("Select Numeric Column", num_cols)
+            fig = px.box(df, y=col, title=f"Box Plot of {col}", 
+                         points="all", color_discrete_sequence=['#2ecc71'])
+            st.plotly_chart(fig, use_container_width=True)
 
-    # ── Line Chart ────────────────────────────────────────────────────────────
+    # ── 3. Line Chart (Numerical/Time) ───────────────────────────────────────
     elif chart_type == "Line Chart":
         if not num_cols:
-            st.warning("No numeric columns available.")
-            return
-        y_cols = st.multiselect("Y axis columns", num_cols, default=num_cols[:1])
-        x_opts = ["Index"] + df.columns.tolist()
-        x_col = st.selectbox("X axis", x_opts)
-
-        if not y_cols:
-            st.info("Select at least one Y column.")
-            return
-
-        plot_df = df.copy()
-        if x_col == "Index":
-            plot_df["__index__"] = range(len(plot_df))
-            x_col_plot = "__index__"
+            st.error("No numerical columns available.")
         else:
-            x_col_plot = x_col
+            y_col = st.selectbox("Select Y-axis (Value)", num_cols)
+            fig = px.line(df, y=y_col, title=f"Trend of {y_col}", markers=True,
+                          color_discrete_sequence=['#2ecc71'])
+            st.plotly_chart(fig, use_container_width=True)
 
-        fig = px.line(plot_df, x=x_col_plot, y=y_cols, title="Line Chart",
-                      template=PLOTLY_THEME, color_discrete_sequence=px.colors.qualitative.Prism)
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Bar Chart ─────────────────────────────────────────────────────────────
+    # ── 4. Bar Chart (Nominal) ───────────────────────────────────────────────
     elif chart_type == "Bar Chart (Categorical)":
-        if not cat_cols:
-            st.warning("No categorical columns available.")
-            return
-        cat_col = st.selectbox("Category column", cat_cols)
-        val_col = st.selectbox("Value column (optional)", ["Count"] + num_cols)
-
-        if val_col == "Count":
-            agg = df[cat_col].value_counts().reset_index()
-            agg.columns = [cat_col, "Count"]
-            fig = px.bar(agg, x=cat_col, y="Count", title=f"Count of {cat_col}",
-                         template=PLOTLY_THEME, color_discrete_sequence=[GREEN])
+        if not nom_cols:
+            st.error("No nominal (text) columns available.")
         else:
-            agg = df.groupby(cat_col)[val_col].mean().reset_index()
-            fig = px.bar(agg, x=cat_col, y=val_col, title=f"Mean {val_col} by {cat_col}",
-                         template=PLOTLY_THEME, color_discrete_sequence=[GREEN])
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
+            # Use redirect column if it exists
+            default_val = st.session_state.get("target_nominal_col", nom_cols[0])
+            col = st.selectbox("Select Category", nom_cols, 
+                               index=nom_cols.index(default_val) if default_val in nom_cols else 0)
+            
+            # Aggregate data for the bar chart
+            counts = df[col].value_counts().reset_index()
+            counts.columns = [col, 'Frequency']
+            
+            fig = px.bar(counts, x=col, y='Frequency', title=f"Frequency of {col}",
+                         color=col, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig, use_container_width=True)
 
-    # ── Pie Chart ─────────────────────────────────────────────────────────────
+    # ── 5. Pie Chart (Nominal) ───────────────────────────────────────────────
     elif chart_type == "Pie Chart":
-        if not cat_cols:
-            st.warning("No categorical columns available.")
-            return
-        cat_col = st.selectbox("Category column", cat_cols)
-        counts = df[cat_col].value_counts().reset_index()
-        counts.columns = [cat_col, "Count"]
-        max_slices = st.slider("Max slices", 3, 20, 8)
-        counts = counts.head(max_slices)
+        if not nom_cols:
+            st.error("No nominal (text) columns available.")
+        else:
+            col = st.selectbox("Select Category", nom_cols)
+            fig = px.pie(df, names=col, title=f"Proportional Distribution of {col}",
+                         hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
+            st.plotly_chart(fig, use_container_width=True)
 
-        fig = px.pie(counts, names=cat_col, values="Count",
-                     title=f"Distribution of {cat_col}",
-                     template=PLOTLY_THEME,
-                     color_discrete_sequence=px.colors.qualitative.Prism,
-                     hole=0.35)
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Scatter + Regression ──────────────────────────────────────────────────
-    elif chart_type == "Scatter + Regression Line":
+    # ── 6. Scatter Plot (Numerical vs Numerical) ─────────────────────────────
+    elif chart_type == "Scatter Plot":
         if len(num_cols) < 2:
-            st.warning("Need at least 2 numeric columns.")
-            return
-        c1, c2 = st.columns(2)
-        x_col = c1.selectbox("X axis", num_cols, index=0)
-        y_col = c2.selectbox("Y axis", num_cols, index=1)
-        color_by = st.selectbox("Color by (optional)", ["None"] + cat_cols)
+            st.error("Scatter plots require at least 2 numerical columns.")
+        else:
+            x_ax = st.selectbox("X Axis", num_cols, index=0)
+            y_ax = st.selectbox("Y Axis", num_cols, index=1)
+            color_opt = st.selectbox("Color by (Nominal - Optional)", ["None"] + nom_cols)
+            
+            color_val = None if color_opt == "None" else color_opt
+            
+            fig = px.scatter(df, x=x_ax, y=y_ax, color=color_val,
+                             title=f"{y_ax} vs {x_ax}", trendline="ols" if color_val is None else None,
+                             template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
 
-        color_kw = {} if color_by == "None" else {"color": color_by}
-        sub = df[[x_col, y_col] + ([] if color_by == "None" else [color_by])].dropna()
-
-        fig = px.scatter(sub, x=x_col, y=y_col, title=f"{y_col} vs {x_col}",
-                         template=PLOTLY_THEME, opacity=0.75,
-                         color_discrete_sequence=px.colors.qualitative.Prism,
-                         trendline="ols", **color_kw)
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Correlation Heatmap ───────────────────────────────────────────────────
-    elif chart_type == "Correlation Heatmap":
-        if len(num_cols) < 2:
-            st.warning("Need at least 2 numeric columns.")
-            return
-        corr = df[num_cols].corr()
-        fig = go.Figure(data=go.Heatmap(
-            z=corr.values,
-            x=corr.columns.tolist(),
-            y=corr.index.tolist(),
-            colorscale="RdYlGn",
-            zmin=-1, zmax=1,
-            text=np.round(corr.values, 2),
-            texttemplate="%{text}",
-            hovertemplate="%{x} vs %{y}: %{z:.2f}<extra></extra>",
-        ))
-        fig.update_layout(title="Correlation Matrix", template=PLOTLY_THEME)
-        fig = _base_layout(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Smart suggestion ──────────────────────────────────────────────────────
-    st.divider()
-    with st.expander("💡 Smart Chart Suggestions"):
-        suggestions = []
-        if num_cols:
-            suggestions.append(f"📊 **Histogram** — explore distribution of `{num_cols[0]}`")
-            suggestions.append(f"📦 **Box Plot** — detect outliers in numeric columns")
-        if cat_cols:
-            suggestions.append(f"🥧 **Pie Chart** — visualize breakdown of `{cat_cols[0]}`")
-        if len(num_cols) >= 2:
-            suggestions.append(f"📈 **Scatter + Regression** — check relationship between `{num_cols[0]}` and `{num_cols[1]}`")
-        if len(num_cols) >= 3:
-            suggestions.append("🌡️ **Heatmap** — explore correlations across all numeric columns")
-        for s in suggestions:
-            st.markdown(f"- {s}")
+    # Clean up the redirect state so it doesn't interfere later
+    if "target_nominal_col" in st.session_state:
+        del st.session_state.target_nominal_col
